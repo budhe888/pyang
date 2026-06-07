@@ -524,6 +524,25 @@ class SidFile:
                     raise SidFileError("key 'item', invalid value.")
                 self.validate_items(self.content[key])
 
+            elif key == 'key-mapping':
+                # Allow key-mapping entries when updating a .sid file with
+                # --sid-extension. The update can introduce unresolved keys,
+                # but the file format still permits the extension field.
+                if not isinstance(self.content[key], dict):
+                    raise SidFileError("key 'key-mapping', invalid value.")
+                for k, v in self.content[key].items():
+                    if not isinstance(k, str):
+                        raise SidFileError("key 'key-mapping', invalid key.")
+                    if not isinstance(v, list):
+                        raise SidFileError("key 'key-mapping', invalid value.")
+                    for entry in v:
+                        if entry is not None and not isinstance(entry, util.int_types):
+                            raise SidFileError(
+                                "invalid 'key-mapping' value '%s'." % entry)
+
+            else:
+                raise SidFileError("invalid field '%s'." % key)
+
         if module_name_absent:
             raise SidFileError("mandatory field 'module-name' not present")
 
@@ -1108,14 +1127,27 @@ class SidFile:
 
         if self.sid_extension:
             key_mapping_sid = {}
-            for k, v in self.content['key-mapping'].items():
+            for k, v in self.content.get('key-mapping', {}).items():
                 k_sid = self.find_sid(k)
+                if k_sid is None: # not found, during an update, a SID key is present, ignore
+                    continue
                 v_sids = []
                 for e in v:
-                    v_sids.append(self.find_sid(e))
-                key_mapping_sid[k_sid] = v_sids
+                    if e is None:
+                        sys.stderr.write(
+                            f"WARNING: skipping null key-mapping target for '{k}'\n")
+                        continue
+                    e_sid = self.find_sid(e)
+                    if e_sid is None:
+                        sys.stderr.write(
+                            f"WARNING: cannot resolve key-mapping target '{e}' for '{k}'\n")
+                        continue
+                    v_sids.append(e_sid)
+                if v_sids:
+                    key_mapping_sid[k_sid] = v_sids
 
-            sid_cont['key-mapping'] = key_mapping_sid
+            if key_mapping_sid:
+                sid_cont['key-mapping'] = key_mapping_sid
 
 
         with open(self.output_file_name, 'w', encoding='utf-8') as outfile:
